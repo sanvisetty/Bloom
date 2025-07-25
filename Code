@@ -1,0 +1,353 @@
+// Bloom: A Simple Mental Health Tracker in SwiftUI
+import SwiftUI
+
+@main
+struct BloomApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+
+// MARK: - Data Models
+struct EmotionEntry: Identifiable, Codable {
+    let id: UUID
+    let date: Date
+    let emotion: String
+    let note: String
+    var isPositive: Bool
+
+    init(id: UUID = UUID(), date: Date, emotion: String, note: String, isPositive: Bool) {
+        self.id = id
+        self.date = date
+        self.emotion = emotion
+        self.note = note
+        self.isPositive = isPositive
+    }
+}
+
+struct Emotion: Identifiable, Hashable {
+    let id = UUID()
+    let name: String
+    let isPositive: Bool
+}
+
+// MARK: - ViewModel
+class BloomViewModel: ObservableObject {
+    @Published var entries: [EmotionEntry] = [] {
+        didSet { saveEntries() }
+    }
+
+    let emotions: [Emotion] = [
+        Emotion(name: "Happy", isPositive: true),
+        Emotion(name: "Joyful", isPositive: true),
+        Emotion(name: "Calm", isPositive: true),
+        Emotion(name: "Excited", isPositive: true),
+        Emotion(name: "Grateful", isPositive: true),
+        Emotion(name: "Content", isPositive: true),
+        Emotion(name: "Hopeful", isPositive: true),
+        Emotion(name: "Sad", isPositive: false),
+        Emotion(name: "Anxious", isPositive: false),
+        Emotion(name: "Angry", isPositive: false),
+        Emotion(name: "Tired", isPositive: false),
+        Emotion(name: "Frustrated", isPositive: false),
+        Emotion(name: "Overwhelmed", isPositive: false),
+        Emotion(name: "Lonely", isPositive: false),
+        Emotion(name: "Jealous", isPositive: false),
+        Emotion(name: "Guilty", isPositive: false)
+    ]
+
+    init() {
+        loadEntries()
+    }
+
+    func addEntry(emotion: String, note: String, isPositive: Bool) {
+        let entry = EmotionEntry(date: Date(), emotion: emotion, note: note, isPositive: isPositive)
+        entries.append(entry)
+    }
+
+    private func saveEntries() {
+        if let data = try? JSONEncoder().encode(entries) {
+            UserDefaults.standard.set(data, forKey: "entries")
+        }
+    }
+
+    private func loadEntries() {
+        if let data = UserDefaults.standard.data(forKey: "entries"),
+           let saved = try? JSONDecoder().decode([EmotionEntry].self, from: data) {
+            entries = saved
+        }
+    }
+}
+
+// MARK: - Content View
+struct ContentView: View {
+    @StateObject var viewModel = BloomViewModel()
+    @State private var showLogView = false
+    @State private var showPrompt = false
+    @State private var showBreathing = false
+    @State private var showCountdown: Bool = false
+    @State private var activityCompleted = false
+    @State private var activityType: String = ""
+
+    var selectedImageName: String {
+        switch viewModel.entries.count {
+        case 0:
+            return "emptyPlantFull"
+        case 1:
+            return viewModel.entries.first?.isPositive == true ? "oneLeafPositive" : "oneLeafNegative"
+        case 2:
+            return viewModel.entries.last?.isPositive == true ? "twoLeavesPositive" : "oneLeafNegative"
+        case 3:
+            return "threeLeaves"
+        default:
+            return "threeLeaves"
+        }
+    }
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                if activityCompleted {
+                    AnimatedLeafTransitionView(imageName: selectedImageName)
+                } else {
+                    Image(selectedImageName)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 300)
+                }
+
+                Button("Log Today’s Emotion") {
+                    showLogView = true
+                }
+                .buttonStyle(.borderedProminent)
+
+                NavigationLink("View Past Logs") {
+                    HistoryView(entries: viewModel.entries)
+                }
+            }
+            .padding()
+            .navigationTitle("🌼 Bloom")
+            .sheet(isPresented: $showLogView) {
+                LogEmotionView(viewModel: viewModel, showPrompt: $showPrompt)
+            }
+            .sheet(isPresented: $showPrompt) {
+                VStack(spacing: 30) {
+                    Text("What would help right now?")
+                        .font(.title2)
+                        .padding()
+                    Button("BREATHING EXERCISE") {
+                        showPrompt = false
+                        showBreathing = true
+                    }
+                    .font(.title)
+                    Button("EXERCISE") {
+                        showPrompt = false
+                        activityType = "exercising"
+                        showCountdown = true
+                    }
+                    .font(.title)
+                    Button("JOURNAL") {
+                        showPrompt = false
+                        activityType = "journaling"
+                        showCountdown = true
+                    }
+                    .font(.title)
+                }
+                .padding()
+            }
+            .sheet(isPresented: $showBreathing) {
+                BreathingView {
+                    showBreathing = false
+                    activityCompleted = true
+                }
+            }
+            .sheet(isPresented: $showCountdown) {
+                CountdownScreen(title: activityType) {
+                    showCountdown = false
+                    activityCompleted = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Log Emotion View
+struct LogEmotionView: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var viewModel: BloomViewModel
+    @Binding var showPrompt: Bool
+    @State private var selectedEmotion: Emotion? = nil
+    @State private var note = ""
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Picker("Emotion", selection: $selectedEmotion) {
+                    ForEach(viewModel.emotions) { emotion in
+                        Text(emotion.name).tag(Optional(emotion))
+                    }
+                }
+                TextField("Why do you feel this way? (optional)", text: $note)
+            }
+            .navigationTitle("New Entry")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        if let emotion = selectedEmotion {
+                            viewModel.addEntry(emotion: emotion.name, note: note, isPositive: emotion.isPositive)
+                            dismiss()
+                            if !emotion.isPositive {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                    showPrompt = true
+                                }
+                            }
+                        }
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Countdown Screen
+struct CountdownScreen: View {
+    let title: String
+    let onComplete: () -> Void
+
+    @State private var timeRemaining = 15 * 60
+    @State private var timer: Timer? = nil
+
+    var body: some View {
+        VStack(spacing: 30) {
+            HStack {
+                Spacer()
+                Button("Skip") {
+                    onComplete()
+                }
+                .padding()
+            }
+            Text("You're \(title)")
+                .font(.largeTitle)
+                .bold()
+                .padding(.top)
+            Text(timeString(from: timeRemaining))
+                .font(.system(size: 48, weight: .medium, design: .monospaced))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.green.opacity(0.2))
+        .onAppear {
+            timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { t in
+                if timeRemaining > 0 {
+                    timeRemaining -= 1
+                } else {
+                    t.invalidate()
+                    onComplete()
+                }
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+        }
+    }
+
+    private func timeString(from seconds: Int) -> String {
+        let minutes = seconds / 60
+        let secs = seconds % 60
+        return String(format: "%02d:%02d", minutes, secs)
+    }
+}
+
+// MARK: - Breathing View
+struct BreathingView: View {
+    var onComplete: () -> Void
+
+    @State private var scale: CGFloat = 1.0
+    @State private var phase: String = "Breathe In"
+    @State private var breathCount = 0
+
+    var body: some View {
+        VStack(spacing: 20) {
+            HStack {
+                Spacer()
+                Button("Skip") {
+                    onComplete()
+                }
+                .padding()
+            }
+            Text(phase)
+                .font(.largeTitle)
+                .bold()
+            Circle()
+                .fill(Color.blue.opacity(0.3))
+                .frame(width: 200 * scale, height: 200 * scale)
+                .onAppear {
+                    withAnimation(Animation.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
+                        scale = 1.5
+                    }
+                    Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { timer in
+                        phase = (phase == "Breathe In") ? "Breathe Out" : "Breathe In"
+                        breathCount += 1
+                        if breathCount >= 10 {
+                            timer.invalidate()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                onComplete()
+                            }
+                        }
+                    }
+                }
+            Spacer()
+        }
+        .padding()
+    }
+}
+
+// MARK: - Animated Leaf Transition View
+struct AnimatedLeafTransitionView: View {
+    let imageName: String
+    @State private var scale: CGFloat = 0.0
+    @State private var yOffset: CGFloat = 40
+
+    var body: some View {
+        Image(imageName)
+            .resizable()
+            .scaledToFit()
+            .frame(height: 300)
+            .scaleEffect(scale)
+            .offset(y: yOffset)
+            .onAppear {
+                withAnimation(.easeOut(duration: 1.0)) {
+                    scale = 1.0
+                    yOffset = 0
+                }
+            }
+    }
+}
+
+// MARK: - History View
+struct HistoryView: View {
+    let entries: [EmotionEntry]
+
+    var body: some View {
+        List(entries.sorted { $0.date > $1.date }) { entry in
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.emotion)
+                    .font(.headline)
+                if !entry.note.isEmpty {
+                    Text(entry.note)
+                        .font(.subheadline)
+                }
+                Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            .padding(.vertical, 4)
+        }
+        .navigationTitle("Your Logs")
+    }
+}
